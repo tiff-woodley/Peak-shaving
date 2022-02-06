@@ -1,0 +1,338 @@
+---
+title: "Incomer Clusters"
+author: "Tiffany Woodley"
+date: "11/9/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## SOM Model solar and grid
+
+```{r}
+# calculating grid demand and normalising
+filtered_load <- read.csv("2019_unormalised.csv")[,-1]
+filtered_solar <- read.csv("2019_solar.csv")[,-1]
+filtered_incomer <- filtered_load - filtered_solar
+
+inc.max <- apply(filtered_incomer,1,max)
+inc.min <- apply(filtered_incomer,1, min)
+
+inc.norm <- matrix(data = NA, nrow = 338, ncol = 48)
+
+for (i in 1:338){
+  inc.norm[i,] = as.matrix((filtered_incomer[i,] - inc.min[i])/(inc.max[i]-inc.min[i]))
+}
+
+filtered_incomer_norm <- inc.norm
+```
+
+```{r}
+# fitting a SOM
+library(kohonen)
+
+set.seed(123)
+
+#Initialize SOM grid
+som_grid <- somgrid(xdim = 7, ydim= 7, topo="hexagonal")
+
+#Fit the SOM to the data
+som_model_inc <- som(as.matrix(filtered_incomer_norm),grid=som_grid, 
+                 rlen=3000, 
+                 alpha=c(0.05,0.01), 
+                 keep.data = TRUE
+)
+```
+
+```{r}
+#Plots to interpret SOM
+plot(som_model_inc, type="changes")
+plot(som_model_inc, type="counts")
+plot(som_model_inc, type="dist.neighbours")
+plot(som_model_inc, type="codes")
+
+```
+
+
+```{r}
+# kmeans clustering
+pca.out <- princomp(filtered_incomer_norm)
+inc.clusters <- kmeans(pca.out$scores[,1:5],5,10)$cluster
+```
+
+```{r}
+# hierarchical clustering
+dist.mat <- dist(abs(cor(na.omit(t(filtered_incomer_norm)))))
+
+hc <- hclust(dist.mat, method = "complete")
+plot(hc, labels = F,-1)
+rect.hclust(hc, k = 15, border = 2:6) 
+
+inc.clusters <- cutree(hclust(dist.mat, method = "average"), 15)
+```
+
+
+```{r}
+# using neuron cluster modes to cluster the SOM weightings
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+som_cluster_inc = c()
+
+for (i in 1:max(som_model_inc$unit.classif)){
+  som_cluster_inc = c(som_cluster_inc,getmode(inc.clusters[som_model_inc$unit.classif == i]))
+  
+}
+
+som_cluster_inc
+```
+
+
+
+```{r}
+# manually choosing clusters
+library("RColorBrewer")
+som_cluster_inc = c(rep(1,24), rep(2,25))
+som_cluster_inc = c(2,2,2,3,3,3,3,2,2,5,5,5,6,3,7,5,6,6,5,3,3,7,7,6,6,6,3,1,7,7,7,4,4,1,1,8,8,9,9,4,4,3,8,8,9,9,10,10,10)
+
+pretty.palette <- brewer.pal(11,"Spectral")
+colors.chosen <- pretty.palette[c(3,4,5,6,7,8,9,10,11)]
+plot(som_model_inc, type="codes",bgcol = colors.chosen[som_cluster_inc])
+add.cluster.boundaries(som_model_inc, som_cluster_inc)
+```
+
+```{r}
+inc.clusters = som_cluster_inc[som_model_inc$unit.classif]
+```
+
+
+
+
+```{r}
+# plotting weekdays on PCA plot
+inc.scores <- pca.out$scores[,1:2]
+colors <- (brewer.pal(7,"Spectral"))
+plot(inc.scores, pch = weekdays.no, col = weekdays.no, type = 'n')
+text(inc.scores[weekdays.no == 1,],label=1,col=colors[1])
+text(inc.scores[weekdays.no == 2,],label=2,col=colors[2])
+text(inc.scores[weekdays.no == 3,],label=3,col=colors[3])
+text(inc.scores[weekdays.no == 4,],label=4,col=colors[4])
+text(inc.scores[weekdays.no == 5,],label=5,col=colors[5])
+text(inc.scores[weekdays.no == 6,],label=6,col=colors[6])
+text(inc.scores[weekdays.no == 7,],label=7,col=colors[7])
+```
+
+```{r}
+# plotting clusters on PCA plot
+plot(inc.scores, pch = weekdays.no, col = weekdays.no, type = 'n')
+text(inc.scores[inc.clusters == 1,],label=1,col=colors[1])
+text(inc.scores[inc.clusters == 2,],label=2,col=colors[2])
+text(inc.scores[inc.clusters == 3,],label=3,col=colors[3])
+text(inc.scores[inc.clusters == 4,],label=4,col=colors[4])
+text(inc.scores[inc.clusters == 5,],label=5,col=colors[5])
+```
+
+```{r}
+pca.out$loadings[,2]
+```
+
+```{r}
+# plotting profiles cluster averages
+cluster_averages = matrix(data = NA, nrow = 10, ncol = 48)
+
+for (j in 1:10){
+
+which.cluster = j
+cluster.no.var <- inc.clusters == which.cluster
+
+profiles <- filtered_incomer_norm[cluster.no.var,]
+
+total = 0
+
+for (i in 1:nrow(profiles)){
+  profile <- as.numeric(as.character(profiles[i,]))
+  total = total + profile
+}
+
+cluster_averages[j,] = as.matrix(total/nrow(profiles))
+}
+
+matplot(t(cluster_averages), type = 'l', lty = 1, col = colors.chosen)
+```
+
+```{r}
+# pulling in energy demand cluster data
+Load_2019_clusters_full <- read.csv("2019_clusters_full.csv")
+Load_2018_clusters_full <- read.csv("2018_clusters.csv")
+Load_2019_clusters <- read.csv("2019_clusters.csv")
+Loads <- read.csv("2019_unormalised.csv")[,-1]
+```
+
+
+```{r}
+# calculating energy demamd cluster averages
+cluster_averages_load = matrix(data = NA, nrow = 3, ncol = 48)
+
+for (j in 1:3){
+
+which.cluster = j
+cluster.no.var <- Load_2019_clusters[,2] == which.cluster
+
+profiles <- Loads[cluster.no.var,]
+
+total = 0
+
+for (i in 1:nrow(profiles)){
+  profile <- as.numeric(as.character(profiles[i,]))
+  total = total + profile
+}
+cluster_averages_load[j,] = as.matrix(total/nrow(profiles))
+}
+
+matplot(t(cluster_averages_load), type = 'l')
+```
+
+# Using average profile as day ahead
+
+```{r}
+# forecasting 2018 day ahead profiles as cluster averages
+Predicted_load_2018 <- matrix(data = NA, nrow = 365, ncol = 48)
+
+Predicted_load_2018[Load_2018_clusters_full[,1] == 1,] = matrix(data = rep(cluster_averages_load[1,],sum(Load_2018_clusters_full[,1] == 1)), ncol = 48,byrow = TRUE)
+
+Predicted_load_2018[Load_2018_clusters_full[,1] == 2,] = matrix(data = rep(cluster_averages_load[2,],sum(Load_2018_clusters_full[,1] == 2)), ncol = 48,byrow = TRUE)
+
+Predicted_load_2018[Load_2018_clusters_full[,1] == 3,] = matrix(data = rep(cluster_averages_load[3,],sum(Load_2018_clusters_full[,1] == 3)), ncol = 48,byrow = TRUE)
+```
+
+```{r}
+# forecasting 2019 day ahead profiles as cluster averages
+Predicted_load_2019 <- matrix(data = NA, nrow = 365, ncol = 48)
+
+Predicted_load_2019[Load_2019_clusters_full[,1] == 1,] = matrix(data = rep(cluster_averages_load[1,],sum(Load_2019_clusters_full[,1] == 1)), ncol = 48,byrow = TRUE)
+
+Predicted_load_2019[Load_2019_clusters_full[,1] == 2,] = matrix(data = rep(cluster_averages_load[2,],sum(Load_2019_clusters_full[,1] == 2)), ncol = 48,byrow = TRUE)
+
+Predicted_load_2019[Load_2019_clusters_full[,1] == 3,] = matrix(data = rep(cluster_averages_load[3,],sum(Load_2019_clusters_full[,1] == 3)), ncol = 48,byrow = TRUE)
+```
+
+# Adding Solar
+
+```{r}
+# calculating grid demand
+solar_2018 <- read.csv("2018_solar.csv")
+solar_2019 <- read.csv("2019_solar_test.csv")[,-c(1,2,3,4)]
+
+Predicted_incomer_2019 <- as.matrix(Predicted_load_2019 - solar_2019)
+Predicted_incomer_2018 <- as.matrix(Predicted_load_2018 - solar_2018)
+
+```
+
+#Normalisation
+
+```{r}
+# normalising 2019 grid demand forecast profiles
+inc.max <- apply(Predicted_incomer_2019,1,max)
+inc.min <- apply(Predicted_incomer_2019,1, min)
+
+Predicted_incomer_2019_norm <- matrix(data = NA, nrow = 365, ncol = 48)
+
+for (i in 1:365){
+  Predicted_incomer_2019_norm[i,] = as.matrix((Predicted_incomer_2019[i,] - inc.min[i])/(inc.max[i]-inc.min[i]))
+}
+```
+
+```{r}
+# normalising 2018 grid demand forecast profiles
+inc.max <- apply(Predicted_incomer_2018,1,max)
+inc.min <- apply(Predicted_incomer_2018,1, min)
+
+Predicted_incomer_2018_norm <- matrix(data = NA, nrow = 365, ncol = 48)
+
+for (i in 1:365){
+  Predicted_incomer_2018_norm[i,] = as.matrix((Predicted_incomer_2018[i,] - inc.min[i])/(inc.max[i]-inc.min[i]))
+}
+```
+
+
+#Assigning cluster
+
+
+```{r}
+day = 5
+cor(Predicted_incomer_2018_norm[day,], cluster_averages[1,])
+cor(Predicted_incomer_2018_norm[day,], cluster_averages[2,])
+cor(Predicted_incomer_2018_norm[day,], cluster_averages[3,])
+cor(Predicted_incomer_2018_norm[day,], cluster_averages[4,])
+cor(Predicted_incomer_2018_norm[day,], cluster_averages[5,])
+cor(Predicted_incomer_2018_norm[day,], cluster_averages[6,])
+cor(Predicted_incomer_2018_norm[day,], cluster_averages[7,])
+cor(Predicted_incomer_2018_norm[day,], cluster_averages[8,])
+cor(Predicted_incomer_2018_norm[day,], cluster_averages[9,])
+cor(Predicted_incomer_2018_norm[day,], cluster_averages[10,])
+```
+
+
+```{r}
+plot(Predicted_incomer_2018_norm[day,], type = 'l')
+lines(cluster_averages[1,], col = 3, type = 'l')
+```
+
+
+```{r}
+# assigning each profile to cluster with highest correlation for 2018
+inc_test_2018 <- c()
+
+for ( i in 1:nrow(Predicted_incomer_2018_norm)){
+  highest.cor <- which.max(c(cor(Predicted_incomer_2018_norm[i,], cluster_averages[1,]),
+cor(Predicted_incomer_2018_norm[i,], cluster_averages[2,]),
+cor(Predicted_incomer_2018_norm[i,], cluster_averages[3,]),
+cor(Predicted_incomer_2018_norm[i,], cluster_averages[4,]),
+cor(Predicted_incomer_2018_norm[i,], cluster_averages[5,]),
+cor(Predicted_incomer_2018_norm[i,], cluster_averages[6,]),
+cor(Predicted_incomer_2018_norm[i,], cluster_averages[7,]),
+cor(Predicted_incomer_2018_norm[i,], cluster_averages[8,]),
+cor(Predicted_incomer_2018_norm[i,], cluster_averages[9,]),
+cor(Predicted_incomer_2018_norm[i,], cluster_averages[10,])
+))
+  inc_test_2018 <- c(inc_test_2018,highest.cor)
+}
+
+inc_test_2018
+```
+
+```{r}
+# assigning each profile to cluster with highest correlation for 2019
+inc_test_2019 <- c()
+
+for ( i in 1:nrow(Predicted_incomer_2019_norm)){
+  highest.cor <- which.max(c(cor(Predicted_incomer_2019_norm[i,], cluster_averages[1,]),
+cor(Predicted_incomer_2019_norm[i,], cluster_averages[2,]),
+cor(Predicted_incomer_2019_norm[i,], cluster_averages[3,]),
+cor(Predicted_incomer_2019_norm[i,], cluster_averages[4,]),
+cor(Predicted_incomer_2019_norm[i,], cluster_averages[5,])))
+  inc_test_2019 <- c(inc_test_2019,highest.cor)
+}
+
+inc_test_2019
+```
+
+
+```{r}
+write.csv(inc.clusters,"2019_incomer_clusters.csv")
+write.csv(inc_test_2019,"2019_incomer_clusters_test.csv")
+write.csv(inc_test_2018,"2018_incomer_clusters_test.csv")
+```
+
+
+
+
+
+
+
+
